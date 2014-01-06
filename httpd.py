@@ -13,7 +13,7 @@ from blackbird.plugins import base
 
 class ConcreteJob(base.JobBase):
     """
-    This class is Called by "Executer".
+    This class is Called by "Executor".
     Get httpd's server-stats,
     and send to specified zabbix server.
     """
@@ -21,14 +21,10 @@ class ConcreteJob(base.JobBase):
     def __init__(self, options, queue=None, logger=None):
         super(ConcreteJob, self).__init__(options, queue, logger)
 
-    def _enqueue(self, item):
-        self.queue.put(item, block=False)
-        self.logger.debug(
-            'Inserted to queue {key}:{value}'
-            ''.format(key=item.key, value=item.value)
-        )
-
-    def looped_method(self):
+    def build_items(self):
+        """
+        main loop
+        """
 
         # get information from server-status
         self._get_status()
@@ -38,6 +34,36 @@ class ConcreteJob(base.JobBase):
 
         # get response time and availability
         self._get_response_time()
+
+    def _enqueue(self, item):
+        self.queue.put(item, block=False)
+        self.logger.debug(
+            'Inserted to queue {key}:{value}'
+            ''.format(key=item.key, value=item.value)
+        )
+
+    def _request(self, url, timeout):
+        """
+        Request http connection and return contents.
+        """
+
+        try:
+            response = requests.get(url, timeout=timeout)
+        except requests.exceptions.RequestException:
+            self.logger.error(
+                'Can not connect to {url}'
+                ''.format(url=url)
+            )
+            return []
+
+        if response.status_code == 200:
+            return response.content.splitlines()
+        else:
+            self.logger.error(
+                'Can not get status from {url} status:{status}'
+                ''.format(url=url, status=response.status_code)
+            )
+            return []
 
     def _get_status(self):
         """
@@ -54,14 +80,28 @@ class ConcreteJob(base.JobBase):
         G : Gracefully finishing
         I : Idle cleanup of worker
         . : Open slot with no current process
-
         """
+
+        mapping = {
+            "_":"waiting_for_connection",
+            "S":"starting_up",
+            "R":"reading_request",
+            "W":"sending_reply",
+            "K":"keepalive_read",
+            "D":"DNS_lookup",
+            "C":"closing_connection",
+            "L":"logging",
+            "G":"gracefully_finishing",
+            "I":"idle_cleanup",
+            ".":"no_current_process",
+        }
+
         if self.options['ssl']:
             method = 'https://'
         else:
             method = 'http://'
         url = (
-            '{method}{host}:{port}{uri}'
+            '{method}{host}:{port}{uri}?auto'
             ''.format(
                 method=method,
                 host=self.options['host'],
@@ -70,78 +110,47 @@ class ConcreteJob(base.JobBase):
             )
         )
 
-        try:
-            response = requests.get(url)
-        except requests.ConnectionError:
-            self.logger.error(
-                'Can not connect to {url}'
-                ''.format(url=url)
-            )
-            return
+        contents = csv.reader(self._request(url=url, timeout=self.options['timeout']),
+                              delimiter = ":",
+                              skipinitialspace = True)
+        status = {}
+        for (key, value) in contents:
+            if key == 'Scoreboard':
+                st = {
+                    "waiting_for_connection":0,
+                    "starting_up":0,
+                    "reading_request":0,
+                    "sending_reply":0,
+                    "keepalive_read":0,
+                    "DNS_lookup":0,
+                    "closing_connection":0,
+                    "logging":0,
+                    "gracefully_finishing":0,
+                    "idle_cleanup":0,
+                    "no_current_process":0,
+                }
+                for sb in value:
+                    st[mapping[sb]] += 1
+                status[key] = st
+            else:
+                status[key] = value
 
-        if response.status_code == 200:
-
-            mapping = {
-                "_":"waiting_for_connection",
-                "S":"starting_up",
-                "R":"reading_request",
-                "W":"sending_reply",
-                "K":"keepalive_read",
-                "D":"DNS_lookup",
-                "C":"closing_connection",
-                "L":"logging",
-                "G":"gracefully_finishing",
-                "I":"idle_cleanup",
-                ".":"no_current_process",
-            }
-
-            contents = csv.reader(response.content.splitlines(),
-                                  delimiter = ":",
-                                  skipinitialspace = True)
-            status = {}
-            for (key, value) in contents:
-                if key == 'Scoreboard':
-                    st = {
-                        "waiting_for_connection":0,
-                        "starting_up":0,
-                        "reading_request":0,
-                        "sending_reply":0,
-                        "keepalive_read":0,
-                        "DNS_lookup":0,
-                        "closing_connection":0,
-                        "logging":0,
-                        "gracefully_finishing":0,
-                        "idle_cleanup":0,
-                        "no_current_process":0,
-                    }
-                    for sb in value:
-                        st[mapping[sb]] += 1
-                    status[key] = st
-                else:
-                    status[key] = value
-
-            for (key, value) in status.items():
-                if key == "Scoreboard":
-                    for (sc_key, sc_val) in value.items():
-                        item = HttpdItem(
-                            key='scoreboard,{key}'.format(key=sc_key),
-                            value=sc_val,
-                            host=self.options['hostname']
-                        )
-                        self._enqueue(item)
-                else:
+        for (key, value) in status.items():
+            if key == "Scoreboard":
+                for (sc_key, sc_val) in value.items():
                     item = HttpdItem(
-                        key=key.replace(' ', '_').lower(),
-                        value=value,
+                        key='scoreboard,{key}'.format(key=sc_key),
+                        value=sc_val,
                         host=self.options['hostname']
                     )
                     self._enqueue(item)
-
-        else:
-            self.logger.error(
-                'Can not get status from {url} status:{status}'
-                ''.format(url=url, status=response.status_code)
-            )
+            else:
+                item = HttpdItem(
+                    key=key.replace(' ', '_').lower(),
+                    value=value,
+                    host=self.options['hostname']
+                )
+                self._enqueue(item)
 
     def _get_config(self):
         """
@@ -152,7 +161,7 @@ class ConcreteJob(base.JobBase):
         else:
             method = 'http://'
         url = (
-            '{method}{host}:{port}{uri}'
+            '{method}{host}:{port}{uri}?config'
             ''.format(
                 method=method,
                 host=self.options['host'],
@@ -161,32 +170,20 @@ class ConcreteJob(base.JobBase):
             )
         )
 
-        try:
-            response = requests.get(url)
-        except requests.ConnectionError:
-            self.logger.error(
-                'Can not connect to {url}'
-                ''.format(url=url)
-            )
-            return
-
-        if response.status_code == 200:
-            for line in response.content.splitlines():
-                result = re.search('MaxClients <i>(\d+)</i>', line)
-                if result:
-                    item = HttpdItem(
-                        key='maxclients',
-                        value=result.group(1),
-                        host=self.options['hostname']
-                    )
-                    self._enqueue(item)
-        else:
-            self.logger.error(
-                'Can not get status from {url} status:{status}'
-                ''.format(url=url, status=response.status_code)
-            )
+        for line in self._request(url=url, timeout=self.options['timeout']):
+            result = re.search('MaxClients <i>(\d+)</i>', line)
+            if result:
+                item = HttpdItem(
+                    key='maxclients',
+                    value=result.group(1),
+                    host=self.options['hostname']
+                )
+                self._enqueue(item)
 
     def _get_response_time(self):
+        """
+        get response time for check uri
+        """
 
         # do not monitoring
         if not 'response_check_uri' in self.options:
@@ -228,8 +225,14 @@ class ConcreteJob(base.JobBase):
 
         with base.Timer() as timer:
             try:
-                response = requests.get(url, headers=headers)
-            except requests.ConnectionError:
+                response = requests.get(url,
+                                        timeout=self.options['response_check_timeout'],
+                                        headers=headers)
+            except requests.exceptions.RequestException:
+                self.logger.error(
+                    'Response check failed. Can not connect to {url}'
+                    ''.format(url=url)
+                )
                 item = HttpdGroupItem(
                     key='available',
                     value=0,
@@ -242,6 +245,10 @@ class ConcreteJob(base.JobBase):
             time = timer.sec
             available = 1
         else:
+            self.logger.error(
+                'Response check failed. Response code is {status} on {url}'
+                ''.format(status=response.status_code, url=url)
+            )
             time = 0
             available = 0
 
@@ -313,6 +320,7 @@ class HttpdGroupItem(base.ItemBase):
 
 class Validator(base.ValidatorBase):
     """
+    Validate configuration.
     """
 
     def __init__(self):
@@ -328,16 +336,18 @@ class Validator(base.ValidatorBase):
             "[{0}]".format(__name__),
             "host = string(default='127.0.0.1')",
             "port = integer(0, 65535, default=80)",
-            "status_uri = string(default='/server-status?auto')",
-            "info_uri = string(default='/server-info?config')",
+            "timeout = integer(0, 600, default=3)",
+            "status_uri = string(default='/server-status')",
+            "info_uri = string(default='/server-info')",
             "user = string(default=None)",
             "password = string(default=None)",
             "ssl = boolean(default=False)",
-            "response_check_port = integer(0, 65535, default=80)",
             "response_check_host = string(default='127.0.0.1')",
+            "response_check_port = integer(0, 65535, default=80)",
+            "response_check_timeout = integer(0, 600, default=3)",
             "response_check_vhost = string(default='localhost')",
             "response_check_uagent = string(default='blackbird response check')",
             "response_check_ssl = boolean(default=False)",
-            "hostname = string(default={0})".format(self.gethostname()),
+            "hostname = string(default={0})".format(self.detect_hostname()),
         )
         return self.__spec
