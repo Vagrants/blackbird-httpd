@@ -48,7 +48,7 @@ class ConcreteJob(base.JobBase):
         """
 
         try:
-            response = requests.get(url, timeout=timeout)
+            response = requests.get(url, timeout=timeout, verify=False)
         except requests.exceptions.RequestException:
             self.logger.error(
                 'Can not connect to {url}'
