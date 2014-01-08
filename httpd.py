@@ -335,7 +335,7 @@ class Validator(base.ValidatorBase):
         self.__spec = (
             "[{0}]".format(__name__),
             "host = string(default='127.0.0.1')",
-            "port = integer(0, 65535, default=80)",
+            "port = integer(1, 65535, default=80)",
             "timeout = integer(0, 600, default=3)",
             "status_uri = string(default='/server-status')",
             "info_uri = string(default='/server-info')",
@@ -343,7 +343,7 @@ class Validator(base.ValidatorBase):
             "password = string(default=None)",
             "ssl = boolean(default=False)",
             "response_check_host = string(default='127.0.0.1')",
-            "response_check_port = integer(0, 65535, default=80)",
+            "response_check_port = integer(1, 65535, default=80)",
             "response_check_timeout = integer(0, 600, default=3)",
             "response_check_vhost = string(default='localhost')",
             "response_check_uagent = string(default='blackbird response check')",
