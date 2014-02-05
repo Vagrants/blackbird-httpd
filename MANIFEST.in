@@ -1,2 +1,6 @@
 include httpd.py
 include httpd.cfg
+include LICENSE.txt
+include README.md
+include CHANGELOG.md
+include PROJECT.txt
