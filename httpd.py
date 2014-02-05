@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 # -*- encodig: utf-8 -*-
-"""
-Get the httpd's "server-status"
-"""
+# pylint: disable=C0111,C0301,R0903
+
+__VERSION__ = '0.1.2'
 
 import requests
 import csv
 import re
+import subprocess
 
 from blackbird.plugins import base
 
@@ -26,6 +27,12 @@ class ConcreteJob(base.JobBase):
         main loop
         """
 
+        # ping item
+        self._ping()
+
+        # detect httpd version
+        self._get_version()
+
         # get information from server-status
         self._get_status()
 
@@ -35,11 +42,17 @@ class ConcreteJob(base.JobBase):
         # get response time and availability
         self._get_response_time()
 
-    def _enqueue(self, item):
+    def _enqueue(self, key, value):
+
+        item = HttpdItem(
+            key=key,
+            value=value,
+            host=self.options['hostname']
+        )
         self.queue.put(item, block=False)
         self.logger.debug(
             'Inserted to queue {key}:{value}'
-            ''.format(key=item.key, value=item.value)
+            ''.format(key=key, value=value)
         )
 
     def _request(self, url, timeout):
@@ -64,6 +77,38 @@ class ConcreteJob(base.JobBase):
                 ''.format(url=url, status=response.status_code)
             )
             return []
+
+    def _ping(self):
+        """
+        send ping item
+        """
+
+        self._enqueue('blackbird.httpd.ping', 1)
+        self._enqueue('blackbird.httpd.version', __VERSION__)
+
+    def _get_version(self):
+        """
+        detect httpd version
+
+        $ httpd -v
+        Server version: Apache/N.N.N (Unix)
+        """
+
+        httpd_version = 'Unknown'
+        try:
+            output = subprocess.Popen([self.options['path'], '-v'],
+                                     stdout=subprocess.PIPE).communicate()[0]
+            match = re.match(r"Server version: Apache/(\S+)", output)
+            if match:
+                httpd_version = match.group(1)
+
+        except OSError:
+            self.logger.debug(
+                'can not exec "{0} -v", failed to get httpd version'
+                ''.format(self.options['path'])
+            )
+
+        self._enqueue('httpd.version', httpd_version)
 
     def _get_status(self):
         """
@@ -116,7 +161,7 @@ class ConcreteJob(base.JobBase):
         status = {}
         for (key, value) in contents:
             if key == 'Scoreboard':
-                st = {
+                stmap = {
                     "waiting_for_connection":0,
                     "starting_up":0,
                     "reading_request":0,
@@ -129,28 +174,20 @@ class ConcreteJob(base.JobBase):
                     "idle_cleanup":0,
                     "no_current_process":0,
                 }
-                for sb in value:
-                    st[mapping[sb]] += 1
-                status[key] = st
+                for sbd in value:
+                    stmap[mapping[sbd]] += 1
+                status[key] = stmap
             else:
                 status[key] = value
 
         for (key, value) in status.items():
             if key == "Scoreboard":
                 for (sc_key, sc_val) in value.items():
-                    item = HttpdItem(
-                        key='scoreboard,{key}'.format(key=sc_key),
-                        value=sc_val,
-                        host=self.options['hostname']
-                    )
-                    self._enqueue(item)
+                    self._enqueue('httpd.stat[scoreboard,{0}]'.format(sc_key),
+                                  sc_val)
             else:
-                item = HttpdItem(
-                    key=key.replace(' ', '_').lower(),
-                    value=value,
-                    host=self.options['hostname']
-                )
-                self._enqueue(item)
+                self._enqueue('httpd.stat[{0}]'.format(
+                              key.replace(' ', '_').lower()), value)
 
     def _get_config(self):
         """
@@ -173,12 +210,7 @@ class ConcreteJob(base.JobBase):
         for line in self._request(url=url, timeout=self.options['timeout']):
             result = re.search('MaxClients <i>(\d+)</i>', line)
             if result:
-                item = HttpdItem(
-                    key='maxclients',
-                    value=result.group(1),
-                    host=self.options['hostname']
-                )
-                self._enqueue(item)
+                self._enqueue('httpd.stat[maxclients]', result.group(1))
 
     def _get_response_time(self):
         """
@@ -187,21 +219,11 @@ class ConcreteJob(base.JobBase):
 
         # do not monitoring
         if not 'response_check_uri' in self.options:
-            item = HttpdGroupItem(
-                key='amount',
-                value=0,
-                host=self.options['hostname']
-            )
-            self._enqueue(item)
+            self._enqueue('httpd.group.amount', 0)
             return
 
         # do monitoring
-        item = HttpdGroupItem(
-            key='amount',
-            value=1,
-            host=self.options['hostname']
-        )
-        self._enqueue(item)
+        self._enqueue('httpd.group.amount', 1)
 
         if self.options['response_check_ssl']:
             method = 'https://'
@@ -226,19 +248,14 @@ class ConcreteJob(base.JobBase):
         with base.Timer() as timer:
             try:
                 response = requests.get(url,
-                                        timeout=self.options['response_check_timeout'],
-                                        headers=headers)
+                                timeout=self.options['response_check_timeout'],
+                                headers=headers)
             except requests.exceptions.RequestException:
                 self.logger.error(
                     'Response check failed. Can not connect to {url}'
                     ''.format(url=url)
                 )
-                item = HttpdGroupItem(
-                    key='available',
-                    value=0,
-                    host=self.options['hostname']
-                )
-                self._enqueue(item)
+                self._enqueue('httpd.group.available', 0)
                 return
 
         if response.status_code == 200:
@@ -252,26 +269,10 @@ class ConcreteJob(base.JobBase):
             time = 0
             available = 0
 
-        item = HttpdGroupItem(
-            key='available',
-            value=available,
-            host=self.options['hostname']
-        )
-        self._enqueue(item)
-
-        item = HttpdItem(
-            key='response_check,time',
-            value=time,
-            host=self.options['hostname']
-        )
-        self._enqueue(item)
-
-        item = HttpdItem(
-            key='response_check,status_code',
-            value=response.status_code,
-            host=self.options['hostname']
-        )
-        self._enqueue(item)
+        self._enqueue('httpd.group.available', available)
+        self._enqueue('httpd.stat[response_check,time]', time)
+        self._enqueue('httpd.stat[response_check,status_code]',
+                       response.status_code)
 
 
 class HttpdItem(base.ItemBase):
@@ -290,29 +291,7 @@ class HttpdItem(base.ItemBase):
         return self._data
 
     def _generate(self):
-        self._data['key'] = 'httpd.stat[{0}]'.format(self.key)
-        self._data['value'] = self.value
-        self._data['host'] = self.host
-        self._data['clock'] = self.clock
-
-
-class HttpdGroupItem(base.ItemBase):
-    """
-    Enqued item.
-    """
-
-    def __init__(self, key, value, host):
-        super(HttpdGroupItem, self).__init__(key, value, host)
-
-        self._data = {}
-        self._generate()
-
-    @property
-    def data(self):
-        return self._data
-
-    def _generate(self):
-        self._data['key'] = 'httpd.group.{0}'.format(self.key)
+        self._data['key'] = self.key
         self._data['value'] = self.value
         self._data['host'] = self.host
         self._data['clock'] = self.clock
@@ -335,13 +314,14 @@ class Validator(base.ValidatorBase):
         self.__spec = (
             "[{0}]".format(__name__),
             "host = string(default='127.0.0.1')",
-            "port = integer(1, 65535, default=80)",
+            "port = integer(0, 65535, default=80)",
             "timeout = integer(0, 600, default=3)",
             "status_uri = string(default='/server-status')",
             "info_uri = string(default='/server-info')",
             "user = string(default=None)",
             "password = string(default=None)",
             "ssl = boolean(default=False)",
+            "path = string(default='/usr/sbin/httpd')",
             "response_check_host = string(default='127.0.0.1')",
             "response_check_port = integer(1, 65535, default=80)",
             "response_check_timeout = integer(0, 600, default=3)",
