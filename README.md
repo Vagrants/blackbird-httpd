@@ -1,6 +1,8 @@
 blackbird-httpd
 ===============
 
+[![Build Status](https://travis-ci.org/Vagrants/blackbird-httpd.png?branch=development)](https://travis-ci.org/Vagrants/blackbird-httpd)
+
 get httpd stats by using server-status.
 
 config file
