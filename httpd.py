@@ -97,7 +97,7 @@ class ConcreteJob(base.JobBase):
         httpd_version = 'Unknown'
         try:
             output = subprocess.Popen([self.options['path'], '-v'],
-                                     stdout=subprocess.PIPE).communicate()[0]
+                                      stdout=subprocess.PIPE).communicate()[0]
             match = re.match(r"Server version: Apache/(\S+)", output)
             if match:
                 httpd_version = match.group(1)
@@ -128,17 +128,17 @@ class ConcreteJob(base.JobBase):
         """
 
         mapping = {
-            "_":"waiting_for_connection",
-            "S":"starting_up",
-            "R":"reading_request",
-            "W":"sending_reply",
-            "K":"keepalive_read",
-            "D":"DNS_lookup",
-            "C":"closing_connection",
-            "L":"logging",
-            "G":"gracefully_finishing",
-            "I":"idle_cleanup",
-            ".":"no_current_process",
+            '_': 'waiting_for_connection',
+            'S': 'starting_up',
+            'R': 'reading_request',
+            'W': 'sending_reply',
+            'K': 'keepalive_read',
+            'D': 'DNS_lookup',
+            'C': 'closing_connection',
+            'L': 'logging',
+            'G': 'gracefully_finishing',
+            'I': 'idle_cleanup',
+            '.': 'no_current_process',
         }
 
         if self.options['ssl']:
@@ -155,24 +155,25 @@ class ConcreteJob(base.JobBase):
             )
         )
 
-        contents = csv.reader(self._request(url=url, timeout=self.options['timeout']),
-                              delimiter = ":",
-                              skipinitialspace = True)
+        contents = csv.reader(self._request(url=url,
+                              timeout=self.options['timeout']),
+                              delimiter=":",
+                              skipinitialspace=True)
         status = {}
         for (key, value) in contents:
             if key == 'Scoreboard':
                 stmap = {
-                    "waiting_for_connection":0,
-                    "starting_up":0,
-                    "reading_request":0,
-                    "sending_reply":0,
-                    "keepalive_read":0,
-                    "DNS_lookup":0,
-                    "closing_connection":0,
-                    "logging":0,
-                    "gracefully_finishing":0,
-                    "idle_cleanup":0,
-                    "no_current_process":0,
+                    'waiting_for_connection': 0,
+                    'starting_up': 0,
+                    'reading_request': 0,
+                    'sending_reply': 0,
+                    'keepalive_read': 0,
+                    'DNS_lookup': 0,
+                    'closing_connection': 0,
+                    'logging': 0,
+                    'gracefully_finishing': 0,
+                    'idle_cleanup': 0,
+                    'no_current_process': 0,
                 }
                 for sbd in value:
                     stmap[mapping[sbd]] += 1
@@ -248,8 +249,10 @@ class ConcreteJob(base.JobBase):
         with base.Timer() as timer:
             try:
                 response = requests.get(url,
-                                timeout=self.options['response_check_timeout'],
-                                headers=headers)
+                                        timeout=self.options[
+                                            'response_check_timeout'
+                                        ],
+                                        headers=headers)
             except requests.exceptions.RequestException:
                 self.logger.error(
                     'Response check failed. Can not connect to {url}'
@@ -272,7 +275,7 @@ class ConcreteJob(base.JobBase):
         self._enqueue('httpd.group.available', available)
         self._enqueue('httpd.stat[response_check,time]', time)
         self._enqueue('httpd.stat[response_check,status_code]',
-                       response.status_code)
+                      response.status_code)
 
 
 class HttpdItem(base.ItemBase):
@@ -326,7 +329,9 @@ class Validator(base.ValidatorBase):
             "response_check_port = integer(1, 65535, default=80)",
             "response_check_timeout = integer(0, 600, default=3)",
             "response_check_vhost = string(default='localhost')",
-            "response_check_uagent = string(default='blackbird response check')",
+            "response_check_uagent=string(
+                default='blackbird response check'
+            )",
             "response_check_ssl = boolean(default=False)",
             "hostname = string(default={0})".format(self.detect_hostname()),
         )
