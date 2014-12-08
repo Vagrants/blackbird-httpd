@@ -155,10 +155,14 @@ class ConcreteJob(base.JobBase):
             )
         )
 
-        contents = csv.reader(self._request(url=url,
-                              timeout=self.options['timeout']),
-                              delimiter=":",
-                              skipinitialspace=True)
+        contents = csv.reader(
+            self._request(
+                url=url,
+                timeout=self.options['timeout']
+            ),
+            delimiter=':',
+            skipinitialspace=True
+        )
         status = {}
         for (key, value) in contents:
             if key == 'Scoreboard':
@@ -187,8 +191,12 @@ class ConcreteJob(base.JobBase):
                     self._enqueue('httpd.stat[scoreboard,{0}]'.format(sc_key),
                                   sc_val)
             else:
-                self._enqueue('httpd.stat[{0}]'.format(
-                              key.replace(' ', '_').lower()), value)
+                self._enqueue(
+                    'httpd.stat[{0}]'.format(
+                        key.replace(' ', '_').lower()
+                    ),
+                    value
+                )
 
     def _get_config(self):
         """
@@ -209,7 +217,7 @@ class ConcreteJob(base.JobBase):
         )
 
         for line in self._request(url=url, timeout=self.options['timeout']):
-            result = re.search('MaxClients <i>(\d+)</i>', line)
+            result = re.search(r'MaxClients <i>(\d+)</i>', line)
             if result:
                 self._enqueue('httpd.stat[maxclients]', result.group(1))
 
@@ -329,9 +337,7 @@ class Validator(base.ValidatorBase):
             "response_check_port = integer(1, 65535, default=80)",
             "response_check_timeout = integer(0, 600, default=3)",
             "response_check_vhost = string(default='localhost')",
-            "response_check_uagent=string(
-                default='blackbird response check'
-            )",
+            "response_check_uagent=string(default='blackbird response check')",
             "response_check_ssl = boolean(default=False)",
             "hostname = string(default={0})".format(self.detect_hostname()),
         )
